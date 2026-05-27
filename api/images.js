@@ -5,7 +5,7 @@
  * In local dev mode, the Express server handles these endpoints instead.
  * This file is ONLY used when deployed on Vercel.
  */
-import { put, list, del } from '@vercel/blob'
+import { list, del } from '@vercel/blob'
 
 export const config = {
   runtime: 'nodejs',
@@ -39,35 +39,6 @@ export async function GET(request) {
     }
 
     return Response.json({ images, total: images.length })
-  } catch (err) {
-    return Response.json({ error: err.message }, { status: 500 })
-  }
-}
-
-// ─── POST /api/images — upload images ───────────────────────
-export async function POST(request) {
-  try {
-    const formData = await request.formData()
-    const files = formData.getAll('images')
-    const uploaded = []
-
-    for (const file of files) {
-      const ext = file.name.split('.').pop()
-      const name = file.name.replace(`.${ext}`, '')
-      const key = `uploads/${name}_${Date.now()}.${ext}`
-
-      const blob = await put(key, file, {
-        access: 'public',
-        contentType: file.type,
-      })
-
-      uploaded.push({
-        filename: blob.pathname.replace('uploads/', ''),
-        url: blob.url,
-      })
-    }
-
-    return Response.json({ uploaded, count: uploaded.length })
   } catch (err) {
     return Response.json({ error: err.message }, { status: 500 })
   }

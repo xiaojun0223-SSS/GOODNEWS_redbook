@@ -23,7 +23,6 @@ export async function POST(request) {
       const key = `uploads/${name}_${Date.now()}.${ext}`
 
       const blob = await put(key, file, {
-        access: 'public',
         addRandomSuffix: false,
       })
 
