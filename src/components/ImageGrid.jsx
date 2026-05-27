@@ -22,9 +22,16 @@ export default function ImageGrid({
     for (const f of files) form.append('images', f)
     try {
       const res = await fetch('/api/upload', { method: 'POST', body: form })
-      if (res.ok) onUpload()
+      const data = await res.json().catch(() => ({}))
+      if (res.ok) {
+        onUpload()
+      } else {
+        console.error('Upload failed:', data)
+        alert('上传失败: ' + (data.error || res.status))
+      }
     } catch (err) {
       console.error('Upload failed:', err)
+      alert('上传失败: ' + err.message)
     }
   }
 
