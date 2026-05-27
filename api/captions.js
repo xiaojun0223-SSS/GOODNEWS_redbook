@@ -83,10 +83,9 @@ export async function POST(request) {
   return Response.json(newCaption)
 }
 
-// ─── PUT /api/captions — update (uses ?id=) ─────────────────
+// ─── PUT /api/captions[/:id] — update ────────────────────────
 export async function PUT(request) {
-  const url = new URL(request.url)
-  const id = parseInt(url.searchParams.get('id'))
+  const id = extractId(request.url)
   if (!id) return Response.json({ error: 'id required' }, { status: 400 })
 
   const body = await request.json()
@@ -99,14 +98,25 @@ export async function PUT(request) {
   return Response.json(captions[idx])
 }
 
-// ─── DELETE /api/captions?id=xxx — delete ───────────────────
+// ─── DELETE /api/captions[/:id] — delete ─────────────────────
 export async function DELETE(request) {
-  const url = new URL(request.url)
-  const id = parseInt(url.searchParams.get('id'))
+  const id = extractId(request.url)
   if (!id) return Response.json({ error: 'id required' }, { status: 400 })
 
   let captions = await readCaptions()
   captions = captions.filter(c => c.id !== id)
   await writeCaptions(captions)
   return Response.json({ success: true })
+}
+
+/** Extract ID from either /api/captions/123 or /api/captions?id=123 */
+function extractId(urlStr) {
+  const url = new URL(urlStr)
+  const fromQuery = parseInt(url.searchParams.get('id'))
+  if (fromQuery) return fromQuery
+  const parts = url.pathname.split('/')
+  const last = parts[parts.length - 1]
+  const fromPath = parseInt(last)
+  if (!isNaN(fromPath) && fromPath > 0) return fromPath
+  return null
 }
