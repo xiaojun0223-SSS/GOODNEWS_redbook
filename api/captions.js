@@ -23,7 +23,7 @@ async function readCaptions() {
 
 async function writeCaptions(data) {
   await put(CAPTIONS_KEY, JSON.stringify(data, null, 2), {
-    // access: 'public',
+    access: 'public',
     contentType: 'application/json',
   })
 }
