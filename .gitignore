@@ -1,0 +1,22 @@
+node_modules/
+dist/
+.vite/
+*.local
+
+# Local server data
+data/cookies.json
+data/debug_*.png
+data/*.png
+
+# Local uploaded images (Vercel stores these in Blob, not git)
+public/images/*
+!public/images/.gitkeep
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# OS files
+.DS_Store
+Thumbs.db

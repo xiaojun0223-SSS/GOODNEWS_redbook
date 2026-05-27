@@ -1,0 +1,31 @@
+{
+  "name": "xiaohongshu-tool",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
+    "dev:client": "vite",
+    "dev:server": "node server/index.js",
+    "build": "vite build",
+    "gen-demo": "node scripts/gen-demo-images.cjs",
+    "postinstall": "node -e \"try{require('child_process').execSync('node scripts/gen-demo-images.cjs',{stdio:'pipe'})}catch(e){console.log('(Vercel: skipping demo images)')}\""
+  },
+  "dependencies": {
+    "@vercel/blob": "^0.27.0",
+    "express": "^4.21.1",
+    "cors": "^2.8.5",
+    "multer": "^1.4.5-lts.1",
+    "playwright": "^1.49.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.20",
+    "concurrently": "^9.1.0",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.16",
+    "vite": "^6.0.3"
+  }
+}

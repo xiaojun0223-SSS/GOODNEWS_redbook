@@ -1,0 +1,17 @@
+{
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "devCommand": "npm run dev",
+  "framework": "vite",
+  "functions": {
+    "api/images.js": { "maxDuration": 30 },
+    "api/captions.js": { "maxDuration": 10 }
+  },
+  "rewrites": [
+    { "source": "/api/images/random", "destination": "/api/images?random=1" },
+    { "source": "/api/images", "destination": "/api/images" },
+    { "source": "/api/captions", "destination": "/api/captions" },
+    { "source": "/api/(.*)", "destination": "/api/$1" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}
