@@ -3,10 +3,17 @@
   "outputDirectory": "dist",
   "framework": "vite",
   "functions": {
-    "api/images.js": { "maxDuration": 30 },
-    "api/captions.js": { "maxDuration": 10 }
+    "api/images.js": {
+      "maxDuration": 30,
+      "memory": 512
+    },
+    "api/captions.js": {
+      "maxDuration": 10,
+      "memory": 256
+    }
   },
   "rewrites": [
+    { "source": "/api/upload", "destination": "/api/images" },
     { "source": "/api/images/random", "destination": "/api/images?random=1" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
