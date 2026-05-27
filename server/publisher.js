@@ -68,11 +68,48 @@ function loadCookies() {
  * @param {number}   params.coverIndex      — which image is the cover (0-based)
  * @param {boolean}  params.draft           — save as draft instead of publish
  */
-export async function publishNote({ imageFilenames, title, body, tags, coverIndex, draft = false }) {
+export async function publishNote({ imageFilenames, imageUrls, title, body, tags, coverIndex, draft = false }) {
   setStatus({ phase: 'starting', message: '启动浏览器...', progress: 5 })
 
+  // ── Resolve image paths: support both local files and remote URLs ──
+  const TMP_DIR = path.join(__dirname, '..', 'data', 'publish-tmp')
+  let usedPaths
+
+  if (imageUrls && imageUrls.length > 0) {
+    // Download from URLs to temporary folder
+    fs.mkdirSync(TMP_DIR, { recursive: true })
+    usedPaths = []
+    for (let i = 0; i < imageUrls.length; i++) {
+      const ext = '.jpg' // fallback
+      const dest = path.join(TMP_DIR, `img_${Date.now()}_${i}${ext}`)
+      setStatus({ phase: 'downloading', message: `下载图片 ${i + 1}/${imageUrls.length}...`, progress: 5 + (i / imageUrls.length) * 10 })
+      try {
+        const res = await fetch(imageUrls[i])
+        if (res.ok) {
+          const buffer = Buffer.from(await res.arrayBuffer())
+          fs.writeFileSync(dest, buffer)
+          usedPaths.push(dest)
+          // Fix extension based on content-type
+          const ct = res.headers.get('content-type') || ''
+          const extMap = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'image/gif': '.gif' }
+          const correctExt = extMap[ct] || '.jpg'
+          if (correctExt !== ext) {
+            const renamed = dest.replace(/\.\w+$/, correctExt)
+            fs.renameSync(dest, renamed)
+            usedPaths[usedPaths.length - 1] = renamed
+          }
+        }
+      } catch (e) {
+        console.log('[Publisher] Failed to download image:', e.message)
+      }
+    }
+  } else {
+    // Use local files
+    usedPaths = imageFilenames.map(f => path.join(IMAGES_DIR, f))
+  }
+
   const browser = await chromium.launch({
-    headless: false,  // visible so user can see what's happening (or true for headless)
+    headless: false,
     args: ['--no-sandbox'],
   })
 
@@ -259,8 +296,6 @@ export async function publishNote({ imageFilenames, title, body, tags, coverInde
     // ── Step 4: Upload images ──
     setStatus({ phase: 'uploading', message: `上传 ${imageFilenames.length} 张图片...`, progress: 30 })
 
-    const imagePaths = imageFilenames.map(f => path.join(IMAGES_DIR, f))
-
     // XHS has multiple file inputs: one for images, one for video.
     // Find the one that accepts image formats.
     const allInputs = page.locator('input[type="file"]')
@@ -290,8 +325,11 @@ export async function publishNote({ imageFilenames, title, body, tags, coverInde
       throw new Error('找不到图片上传入口，请查看 debug_after_nav.png 截图')
     }
 
-    await imageInput.setInputFiles(imagePaths)
-    console.log('[Publisher] Images uploaded:', imagePaths.length, 'files')
+    await imageInput.setInputFiles(usedPaths)
+    console.log('[Publisher] Images uploaded:', usedPaths.length, 'files')
+
+    // Clean up temp files after successful upload (no local storage needed)
+    try { fs.rmSync(TMP_DIR, { recursive: true, force: true }) } catch {}
 
     // Wait for images to process — XHS needs time to generate previews
     console.log('[Publisher] Waiting for images to process...')

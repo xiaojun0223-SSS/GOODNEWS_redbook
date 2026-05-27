@@ -115,6 +115,24 @@ export default function App() {
             <button onClick={fetchImages} className="btn-secondary text-xs px-3 py-1.5">
               🔄 刷新
             </button>
+            <button
+              onClick={async () => {
+                const url = localStorage.getItem('vercel_url') || prompt('输入你的 Vercel 部署地址（不含 / 结尾）：', 'https://goodnews-redbook.vercel.app')
+                if (!url) return
+                localStorage.setItem('vercel_url', url)
+                const res = await fetch('/api/sync', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ vercelUrl: url }),
+                })
+                const data = await res.json()
+                alert(`同步完成：\n图片 ${data.images} 张\n文案 ${data.captions ? '✅' : '❌'}`)
+                if (data.images > 0 || data.captions) fetchImages()
+              }}
+              className="btn-secondary text-xs px-3 py-1.5 text-green-600"
+            >
+              ⬇️ 同步
+            </button>
           </div>
         </div>
       </header>

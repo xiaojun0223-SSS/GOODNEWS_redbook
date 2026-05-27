@@ -1,0 +1,6 @@
+{
+  "model": "claude-dk-v4-pro",
+  "env": {
+    "ANTHROPIC_SMALL_FAST_MODEL": "claude-dk-v4-pro"
+  }
+}

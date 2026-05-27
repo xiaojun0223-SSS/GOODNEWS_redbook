@@ -1,9 +1,40 @@
 # 小红书发布助手
 
-本地 + 云端双模式的小红书笔记发布工具。
+全功能小红书笔记发布工具。支持云服务器部署，国内直接访问，任何设备都能用。
 
-- **Vercel 云端**：任何人打开网页就能上传图片、管理文案
-- **本地运行**：AI 文案生成 + Playwright 自动发布
+- **云服务器（推荐）**：国内访问免 VPN，任何电脑手机上传/发布
+- **Vercel 云端**：网页端上传图片、管理文案
+- **本地运行**：AI 文案生成 + Playwright 发布
+
+---
+
+## 云服务器一键部署（阿里云 / 腾讯云）
+
+买一台 Ubuntu 24.04 服务器（最低 ¥68/月），SSH 登录后执行一条命令：
+
+```bash
+# 把项目拉到服务器
+cd /opt
+git clone https://github.com/xiaojun0223-SSS/GOODNEWS_redbook.git xiaohongshu
+cd xiaohongshu
+
+# 安装依赖 & 构建
+npm install
+npm run build
+
+# 安装 Playwright 浏览器
+npx playwright install chromium
+
+# 用 PM2 启动（持久运行）
+npm install -g pm2
+pm2 start server/index.js --name xiaohongshu
+pm2 save
+pm2 startup
+
+# 访问 http://服务器IP:3001
+```
+
+如需配置域名和 HTTPS，告诉我帮你配 Nginx。
 
 ## 本地开发
 

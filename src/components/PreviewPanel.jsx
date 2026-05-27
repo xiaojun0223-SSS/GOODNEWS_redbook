@@ -72,8 +72,11 @@ export default function PreviewPanel({ selected, caption, onBack }) {
     setPubStatus({ phase: 'starting', message: '启动中...', progress: 0 })
 
     try {
+      // Prefer image URLs (from Vercel Blob) over local filenames
+      const isLocal = window.location.hostname === 'localhost'
       const body = {
         imageFilenames: selected.map(s => s.filename),
+        imageUrls: isLocal ? selected.map(s => s.url) : undefined,
         title: caption.title,
         body: caption.body,
         tags: caption.tags,
