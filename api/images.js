@@ -8,7 +8,7 @@
 import { put, list, del } from '@vercel/blob'
 
 export const config = {
-  runtime: 'nodejs18.x',
+  runtime: 'nodejs',
 }
 
 // ─── GET /api/images — list all images ───────────────────────

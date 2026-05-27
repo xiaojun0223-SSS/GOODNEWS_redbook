@@ -7,7 +7,7 @@ import { put, list, get, del } from '@vercel/blob'
 const CAPTIONS_KEY = 'data/captions.json'
 
 export const config = {
-  runtime: 'nodejs18.x',
+  runtime: 'nodejs',
 }
 
 async function readCaptions() {
