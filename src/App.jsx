@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect } from 'react'
 import ImageGrid from './components/ImageGrid'
 import CaptionEditor from './components/CaptionEditor'
 import PreviewPanel from './components/PreviewPanel'
+import CaptionLibrary from './components/CaptionLibrary'
 
 const STEPS = [
   { key: 'select', label: '选择图片', num: 1 },
@@ -16,6 +17,8 @@ export default function App() {
   const [caption, setCaption] = useState(null)        // generated caption object
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
+  const [showCaptionLib, setShowCaptionLib] = useState(false)
+  const [captions, setCaptions] = useState([])
 
   // Store settings
   const [settings, setSettings] = useState({
@@ -50,6 +53,16 @@ export default function App() {
       return [...prev, img]
     })
   }
+
+  // Fetch captions when modal opens
+  const fetchCaptions = useCallback(async () => {
+    try {
+      const res = await fetch('/api/captions')
+      setCaptions(await res.json())
+    } catch {}
+  }, [])
+
+  useEffect(() => { fetchCaptions() }, [fetchCaptions])
 
   // Clear error when changing steps
   const goTo = (s) => {
@@ -92,9 +105,17 @@ export default function App() {
             ))}
           </nav>
 
-          <button onClick={fetchImages} className="btn-secondary text-xs px-3 py-1.5">
-            🔄 刷新
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => { setShowCaptionLib(true); fetchCaptions() }}
+              className="btn-secondary text-xs px-3 py-1.5"
+            >
+              📋 文案库
+            </button>
+            <button onClick={fetchImages} className="btn-secondary text-xs px-3 py-1.5">
+              🔄 刷新
+            </button>
+          </div>
         </div>
       </header>
 
@@ -149,6 +170,26 @@ export default function App() {
           />
         )}
       </main>
+
+      {/* Caption Library Modal — accessible from any step */}
+      {showCaptionLib && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center pt-12 pb-8 bg-black/40" onClick={() => setShowCaptionLib(false)}>
+          <div
+            className="card w-full max-w-lg mx-4 max-h-[80vh] overflow-y-auto p-5"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-sm font-semibold text-gray-800">📋 文案库</h2>
+              <button onClick={() => setShowCaptionLib(false)} className="text-gray-400 hover:text-gray-600 text-xs">关闭</button>
+            </div>
+            <CaptionLibrary
+              captions={captions}
+              onRefresh={fetchCaptions}
+              onUse={(c) => { setCaption(c); setShowCaptionLib(false) }}
+            />
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -1,24 +1,43 @@
 /**
  * Caption Library API — Vercel serverless compatible.
- * Reads/writes to a captions.json file via Vercel Blob.
+ * Reads/writes to Vercel Blob. Seeds from git-tracked data/captions.json on first run.
  */
-import { put, list, get, del } from '@vercel/blob'
+import { put, get, del } from '@vercel/blob'
+import fs from 'fs'
+import path from 'path'
+import { fileURLToPath } from 'url'
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const CAPTIONS_KEY = 'data/captions.json'
+const LOCAL_FILE = path.join(__dirname, '..', 'data', 'captions.json')
 
-export const config = {
-  runtime: 'nodejs',
-}
+export const config = { runtime: 'nodejs' }
 
 async function readCaptions() {
+  // Try Blob first
   try {
     const blob = await get(CAPTIONS_KEY)
-    if (!blob) return []
-    const text = await blob.text()
-    return JSON.parse(text)
-  } catch {
-    return []
-  }
+    if (blob) {
+      const text = await blob.text()
+      const data = JSON.parse(text)
+      if (data.length > 0) return data // Blob has data
+    }
+  } catch {}
+
+  // Blob empty or error — seed from local JSON file (committed to git)
+  try {
+    if (fs.existsSync(LOCAL_FILE)) {
+      const text = fs.readFileSync(LOCAL_FILE, 'utf-8')
+      const data = JSON.parse(text)
+      if (data.length > 0) {
+        // Write to Blob so subsequent reads use Blob
+        await writeCaptions(data)
+        return data
+      }
+    }
+  } catch {}
+
+  return []
 }
 
 async function writeCaptions(data) {
