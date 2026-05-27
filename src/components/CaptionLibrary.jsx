@@ -38,7 +38,7 @@ export default function CaptionLibrary({ captions, onRefresh, onUse }) {
           body: JSON.stringify(form),
         })
       } else {
-        res = await fetch(`/api/captions/${editingId}`, {
+        res = await fetch(`/api/captions?id=${editingId}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(form),
@@ -59,7 +59,7 @@ export default function CaptionLibrary({ captions, onRefresh, onUse }) {
   const handleDelete = async (id) => {
     if (!confirm('确定删除这条文案？')) return
     try {
-      await fetch(`/api/captions/${id}`, { method: 'DELETE' })
+      await fetch(`/api/captions?id=${id}`, { method: 'DELETE' })
       onRefresh()
     } catch (err) {
       console.error('Delete failed:', err)
