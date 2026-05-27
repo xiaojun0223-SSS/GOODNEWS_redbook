@@ -30,18 +30,24 @@ export default function CaptionLibrary({ captions, onRefresh, onUse }) {
   const handleSave = async () => {
     if (!form.title.trim() && !form.body.trim()) return
     try {
+      let res
       if (isNew) {
-        await fetch('/api/captions', {
+        res = await fetch('/api/captions', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(form),
         })
       } else {
-        await fetch(`/api/captions/${editingId}`, {
+        res = await fetch(`/api/captions/${editingId}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(form),
         })
+      }
+      if (!res.ok) {
+        const err = await res.text()
+        alert('保存失败: ' + (err || res.status))
+        return
       }
       cancelEdit()
       onRefresh()
