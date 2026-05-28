@@ -41,6 +41,30 @@ async function proxyFromCloud(endpoint) {
   return null
 }
 
+// ─── Image proxy: serve cloud images locally ─────────────
+
+app.get('/images/:filename', async (req, res) => {
+  const filename = req.params.filename
+  // Try local first
+  const localPath = path.join(IMAGES_DIR, filename)
+  if (fs.existsSync(localPath)) {
+    return res.sendFile(localPath)
+  }
+  // Proxy from cloud
+  if (cloudUrl) {
+    try {
+      const cloudRes = await fetch(`${cloudUrl}/images/${encodeURIComponent(filename)}`)
+      if (cloudRes.ok) {
+        const buffer = Buffer.from(await cloudRes.arrayBuffer())
+        res.set('Content-Type', cloudRes.headers.get('content-type') || 'image/jpeg')
+        res.set('Cache-Control', 'public, max-age=3600')
+        return res.send(buffer)
+      }
+    } catch {}
+  }
+  res.status(404).send('Not found')
+})
+
 // ─── API: Save cloud URL ───────────────────────────────────
 
 app.post('/api/cloud-url', (req, res) => {
@@ -57,7 +81,10 @@ app.post('/api/cloud-url', (req, res) => {
 app.get('/api/images', async (req, res) => {
   // Try cloud first
   const cloud = await proxyFromCloud('/api/images')
-  if (cloud) return res.json(cloud)
+  if (cloud) {
+    // Keep relative URLs - local server will proxy them
+    return res.json(cloud)
+  }
 
   // Fallback to local
   try {
@@ -82,6 +109,25 @@ app.get('/api/images/random', async (req, res) => {
 app.post('/api/upload', upload.array('images', 20), (req, res) => {
   const uploaded = req.files.map(f => ({ filename: f.filename, url: `/images/${encodeURIComponent(f.filename)}` }))
   res.json({ uploaded, count: uploaded.length })
+})
+
+// Delete a single image by filename
+app.delete('/api/images/:filename', async (req, res) => {
+  const { filename } = req.params
+  // Try local first
+  const localPath = path.join(IMAGES_DIR, filename)
+  if (fs.existsSync(localPath)) {
+    fs.unlinkSync(localPath)
+    return res.json({ success: true, message: '已删除' })
+  }
+  // If cloudUrl is set, forward delete to cloud
+  if (cloudUrl) {
+    try {
+      const cloudRes = await fetch(`${cloudUrl}/api/images/${encodeURIComponent(filename)}`, { method: 'DELETE' })
+      if (cloudRes.ok) return res.json({ success: true, message: '已从服务器删除' })
+    } catch {}
+  }
+  res.status(404).json({ error: '文件不存在' })
 })
 
 // ─── Captions ───────────────────────────────────────────────
