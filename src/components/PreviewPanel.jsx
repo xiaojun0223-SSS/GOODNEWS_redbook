@@ -7,6 +7,8 @@ export default function PreviewPanel({ selected, caption, onBack }) {
   const [pubStatus, setPubStatus] = useState(null)    // progress message
   const [loginBusy, setLoginBusy] = useState(false)
   const [qrCodeUrl, setQrCodeUrl] = useState(null)
+  const [showCookieInput, setShowCookieInput] = useState(false)
+  const [cookieInput, setCookieInput] = useState('')
 
   // Check login status on mount
   useEffect(() => {
@@ -194,6 +196,35 @@ export default function PreviewPanel({ selected, caption, onBack }) {
             <button onClick={handleLogin} disabled={loginBusy} className="btn-secondary text-xs py-1.5 px-3">
               {loginBusy ? '登录中...' : loggedIn ? '🔄 更新登录' : '🔐 扫码登录'}
             </button>
+            <button onClick={() => setShowCookieInput(!showCookieInput)} className="text-[10px] text-gray-400 hover:text-gray-600 underline">
+              {showCookieInput ? '收起' : '手动粘贴 Cookie（推荐）'}
+            </button>
+            {showCookieInput && (
+              <div className="space-y-2">
+                <p className="text-[10px] text-gray-500">在浏览器打开 creator.xiaohongshu.com 并登录，F12 → Console，粘贴以下命令按回车，然后把结果粘贴到这里：</p>
+                <code className="block text-[9px] bg-gray-100 p-2 rounded break-all font-mono">
+                  document.cookie.split('; ').map(c=&gt;c.trim()).join('\n')
+                </code>
+                <textarea value={cookieInput} onChange={e => setCookieInput(e.target.value)} rows={4} className="input-field text-[10px] font-mono" placeholder="粘贴 Cookie 内容..." />
+                <button onClick={async () => {
+                  const lines = cookieInput.split('\n').filter(l => l.trim())
+                  const cookies = lines.map(l => {
+                    const eq = l.indexOf('=')
+                    return { name: l.slice(0, eq), value: l.slice(eq + 1), domain: '.xiaohongshu.com', path: '/' }
+                  })
+                  const res = await fetch('/api/cookies/upload', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ cookies }),
+                  })
+                  const data = await res.json()
+                  if (data.success) { setLoggedIn(true); setShowCookieInput(false); alert('Cookie 上传成功！') }
+                  else { alert('上传失败：' + (data.error || '未知错误')) }
+                }} className="btn-primary text-xs py-1.5">
+                  💾 保存 Cookie
+                </button>
+              </div>
+            )}
             {qrCodeUrl && (
               <div className="text-center">
                 <p className="text-xs text-gray-500 mb-2">用小红书 App 扫描下方二维码登录</p>

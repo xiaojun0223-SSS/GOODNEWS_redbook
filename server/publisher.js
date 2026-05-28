@@ -7,16 +7,21 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const COOKIES_FILE = path.join(__dirname, '..', 'data', 'cookies.json')
 const IMAGES_DIR = path.join(__dirname, '..', 'public', 'images')
 const DATA_DIR = path.join(__dirname, '..', 'data')
+const BROWSER_PROFILE = path.join(DATA_DIR, 'browser-profile')
 
 fs.mkdirSync(DATA_DIR, { recursive: true })
 
 let currentStatus = { phase: 'idle', message: '', loggedIn: false, progress: 0, qrCodeUrl: null }
+let persistentContext = null
 
 export function getStatus() { return { ...currentStatus } }
 
 function setStatus(update) { Object.assign(currentStatus, update); console.log('[Publisher]', currentStatus.phase, currentStatus.message || '') }
 
-function saveCookies(cookies) { fs.writeFileSync(COOKIES_FILE, JSON.stringify(cookies, null, 2)) }
+function saveCookies(cookies) {
+  const fixed = cookies.map(c => ({ ...c, expires: c.expires && c.expires > 0 ? c.expires : Math.floor(Date.now() / 1000) + 604800 }))
+  fs.writeFileSync(COOKIES_FILE, JSON.stringify(fixed, null, 2))
+}
 
 function loadCookies() { try { return JSON.parse(fs.readFileSync(COOKIES_FILE, 'utf-8')) } catch { return null } }
 
@@ -33,161 +38,200 @@ export async function publishNote({ imageFilenames, imageUrls, title, body, tags
     }
   } else { usedPaths = imageFilenames.map(f => path.join(IMAGES_DIR, f)) }
 
-  const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] })
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36' })
+  // Use real browser on MacBook (headless: false), fallback to headless on server
+  const isMac = process.platform === 'darwin'
+  const useHeadless = !isMac  // false on Mac (real browser), true on server
+
+  const context = persistentContext || await chromium.launchPersistentContext(BROWSER_PROFILE, {
+    headless: useHeadless,
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-blink-features=AutomationControlled'],
+    viewport: { width: 1440, height: 900 },
+    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  })
+  await context.addInitScript(() => { Object.defineProperty(navigator, 'webdriver', { get: () => false }) })
   const page = await context.newPage()
 
   try {
     setStatus({ phase: 'navigating', message: '检查登录状态...', progress: 10 })
-    const saved = loadCookies()
-    if (saved) { await context.addCookies(saved); console.log('[Publisher] Restored cookies') }
     await page.goto('https://creator.xiaohongshu.com', { waitUntil: 'domcontentloaded', timeout: 30000 })
-    await page.waitForTimeout(3000)
-    const hasPublishBtn = await page.locator('text=发布笔记').first().isVisible({ timeout: 5000 }).catch(() => false)
+    await page.waitForTimeout(5000)
+
+    let hasPublishBtn = false
+    for (let i = 0; i < 5; i++) {
+      hasPublishBtn = await page.locator('text=发布笔记').first().isVisible({ timeout: 2000 }).catch(() => false)
+      if (hasPublishBtn) break
+      if (i === 2) { await page.reload({ waitUntil: 'domcontentloaded' }); await page.waitForTimeout(3000) }
+    }
     if (!hasPublishBtn) {
-      await browser.close(); setStatus({ phase: 'error', message: '登录已过期，请先点击「🔄 更新登录」重新登录', progress: 0, loggedIn: false })
+      setStatus({ phase: 'error', message: '登录已过期，请先点击「🔄 更新登录」重新登录', progress: 0, loggedIn: false })
       return { success: false, message: '需要登录' }
     }
     setStatus({ loggedIn: true })
 
-    // Navigate to publish page
     setStatus({ phase: 'navigating', message: '打开发布页面...', progress: 20 })
-    let editorOpened = false
-    try {
-      editorOpened = await page.evaluate(() => {
-        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT); let node
-        while ((node = walker.nextNode())) { if (node.textContent && node.textContent.includes('发布笔记')) { let el = node.parentElement; while (el && el.tagName !== 'BUTTON' && el.tagName !== 'A') el = el.parentElement; if (el) { el.click(); return true }; node.parentElement.click(); return true } }
-        return false
-      })
-    } catch {}
-    if (!editorOpened) {
-      for (const url of ['https://creator.xiaohongshu.com/publish', 'https://creator.xiaohongshu.com/publish/notes']) {
-        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {}); await page.waitForTimeout(2000)
-        const hasInput = await page.locator('input[type="file"][accept*="jpg"], input[type="file"][accept*="image"]').count()
-        if (hasInput > 0) { editorOpened = true; break }
-      }
-    }
-    await page.waitForTimeout(2000)
-    // Switch to 图文 tab
-    await page.evaluate(() => { const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT); let node; while ((node = walker.nextNode())) { if (node.textContent && node.textContent.trim() === '上传图文') { let el = node.parentElement; for (let i = 0; i < 5 && el; i++) { try { el.click(); return true } catch {}; el = el.parentElement } } }; return false })
+    await page.goto('https://creator.xiaohongshu.com/publish/publish?from=menu&target=image', { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() =>
+      page.goto('https://creator.xiaohongshu.com/publish', { waitUntil: 'domcontentloaded', timeout: 30000 })
+    )
     await page.waitForTimeout(3000)
-    // Upload
+    console.log('[Publisher] Publish page URL:', page.url())
+
+    if (page.url().includes('target=video') || page.url().includes('/video')) {
+      await page.evaluate(() => { const el = [...document.querySelectorAll('*')].find(e => e.textContent.trim() === '上传图文'); if (el) { el.click(); return true }; return false })
+      await page.waitForTimeout(3000)
+    }
+
     setStatus({ phase: 'uploading', message: '上传图片...', progress: 30 })
     const allInputs = page.locator('input[type="file"]'); const inputCount = await allInputs.count(); let imageInput = null
     for (let i = 0; i < inputCount; i++) { const inp = allInputs.nth(i); const accept = (await inp.getAttribute('accept')) || ''; if (accept.includes('image') || accept.includes('jpg') || accept.includes('png') || accept.includes('jpeg')) { imageInput = inp; break }; if (!accept) imageInput = inp }
     if (!imageInput) throw new Error('找不到图片上传入口')
     await imageInput.setInputFiles(usedPaths); try { fs.rmSync(TMP_DIR, { recursive: true, force: true }) } catch {}
-    await page.waitForTimeout(8000)
-    // Fill title
+    console.log('[Publisher] Waiting for images to process...')
+    await page.waitForTimeout(12000)
+
+    // Take a screenshot after processing
+    await page.screenshot({ path: path.join(DATA_DIR, 'debug_after_upload.png') })
+    console.log('[Publisher] Screenshot taken after upload')
+
     setStatus({ phase: 'filling', message: '填写标题...', progress: 60 })
     await page.evaluate((text) => { const s = ['input[placeholder*="标题"]', '[placeholder*="标题"]', '[class*="title"] input']; for (const sel of s) { const el = document.querySelector(sel); if (el) { el.focus(); el.value = text; el.dispatchEvent(new Event('input', { bubbles: true })); return } } }, title)
-    // Fill body
+
     const bodyText = body.replace(/\n/g, '\n\n')
     const bodyFilled = await page.evaluate((text) => { const s = ['[placeholder*="正文"]', '[contenteditable="true"]', 'textarea']; for (const sel of s) { const el = document.querySelector(sel); if (el) { el.focus(); if (el.contentEditable === 'true') el.textContent = text; else el.value = text; el.dispatchEvent(new Event('input', { bubbles: true })); return true } }; return false }, bodyText)
     if (!bodyFilled) { await page.mouse.click(500, 400); await page.waitForTimeout(500); for (const p of body.split('\n').filter(p => p.trim())) { await page.keyboard.type(p, { delay: 20 }); await page.keyboard.press('Enter'); await page.keyboard.press('Enter') } }
-    // Tags
+
     setStatus({ phase: 'filling', message: '添加标签...', progress: 80 })
     if (tags.length > 0) { const tc = await page.evaluate(() => { for (const t of ['添加标签', '添加话题']) { const el = [...document.querySelectorAll('*')].find(e => e.textContent.trim() === t); if (el) { el.click(); return true } }; return false }); if (tc) { await page.waitForTimeout(800); for (const tag of tags) { await page.keyboard.type(tag, { delay: 30 }); await page.waitForTimeout(400); await page.keyboard.press('Enter'); await page.waitForTimeout(400) } } }
+
     saveCookies(await context.cookies())
-    // Publish/Draft
-    if (draft) {
-      setStatus({ phase: 'publishing', message: '保存草稿...', progress: 90 })
-      const dc = await page.evaluate(() => { for (const btn of [...document.querySelectorAll('button, a, span, div')]) { if (btn.textContent.trim() === '存草稿' || btn.textContent.trim() === '保存草稿') { btn.click(); return true } }; return false })
-      await page.waitForTimeout(3000)
-    } else {
-      setStatus({ phase: 'publishing', message: '发布中...', progress: 90 })
-      const pc = await page.evaluate(() => { for (const btn of [...document.querySelectorAll('button, a, span, div')]) { if (btn.textContent.trim() === '发布' || btn.textContent.trim() === '发布笔记') { btn.click(); return true } }; return false })
-      await page.waitForTimeout(3000)
+
+    // Click save or publish. Note: drafts are stored in browser local storage only.
+    setStatus({ phase: 'publishing', message: draft ? '保存草稿...' : '发布中...', progress: 90 })
+    const btnText = draft ? '暂存离开' : '发布'
+    console.log('[Publisher] Looking for 发布 button...')
+
+    // Scroll to bottom to ensure buttons are in view
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight))
+    await page.waitForTimeout(1000)
+
+    // Headless browser detection prevents XHS from showing publish buttons.
+    // Try clicking at the known button position via coordinates.
+    let publishClicked = false
+
+    await page.screenshot({ path: path.join(DATA_DIR, 'debug_publish.png') })
+
+    // XHS publish button position (floating bottom-right on 1440x900 viewport)
+    const positions = [
+      { x: 1330, y: 850 },  // 发布 button typical position
+      { x: 1300, y: 840 },
+      { x: 1350, y: 860 },
+      { x: 1200, y: 850 },
+    ]
+    for (const pos of positions) {
+      await page.mouse.click(pos.x, pos.y)
+      await page.waitForTimeout(500)
     }
-    setStatus({ phase: 'done', message: draft ? '✅ 草稿已完成' : '✅ 已发布', progress: 100 })
-    saveCookies(await context.cookies())
+    console.log('[Publisher] Clicked at multiple bottom positions')
+
+    // Check if navigation happened (page changed after click)
+    await page.waitForTimeout(2000)
+    const currentUrl = page.url()
+    if (!currentUrl.includes('publish')) {
+      console.log('[Publisher] Page navigated away from editor - publish likely succeeded')
+      publishClicked = true
+    }
+
+    await page.waitForTimeout(5000)
+    console.log('[Publisher] Final URL:', page.url())
+
+    // Check if there's a confirmation dialog
+    try {
+      const confirmBtn = page.locator('button:has-text("确认"), button:has-text("确定"), button:has-text("发布")').first()
+      if (await confirmBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
+        await confirmBtn.click()
+        console.log('[Publisher] Clicked confirmation dialog')
+        await page.waitForTimeout(3000)
+      }
+    } catch {}
+    const doneMsg = draft ? (publishClicked ? '✅ 草稿已保存（仅当前浏览器可见）' : '✅ 内容已填入') : (publishClicked ? '✅ 已发布' : '✅ 内容已填入')
+    setStatus({ phase: 'done', message: doneMsg, progress: 100 })
   } catch (err) { setStatus({ phase: 'error', message: err.message }); try { await page.screenshot({ path: path.join(DATA_DIR, 'debug_error.png') }) } catch {} }
   return { success: !currentStatus.message?.includes('Error'), message: currentStatus.message }
 }
 
-/**
- * Manual login - go to creator page, find QR icon by coordinates, click it, screenshot the QR code.
- */
 export async function manualLogin() {
-  console.log('[Publisher] Manual login - deleting old cookies')
+  console.log('[Publisher] Manual login - persistent profile at', BROWSER_PROFILE)
   try { fs.unlinkSync(COOKIES_FILE) } catch {}
-  console.log('[Publisher] Old cookies deleted')
 
-  const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] })
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
-  const page = await context.newPage()
-
-  await page.goto('https://creator.xiaohongshu.com', { waitUntil: 'networkidle', timeout: 30000 })
-  await page.waitForTimeout(3000)
-  console.log('[Publisher] Login page URL:', page.url())
-
-  // Find the login form area
-  const loginBox = await page.evaluate(() => {
-    // Look for a large centered container that's likely the login form
-    const forms = document.querySelectorAll('form, div[class*="login"], div[class*="Login"], div[class*="form"], div[class*="Form"]')
-    for (const f of forms) {
-      const r = f.getBoundingClientRect()
-      if (r.width > 200 && r.height > 200 && r.top > 0 && r.top < 400) {
-        return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) }
-      }
-    }
-    // Fallback: find a large centered div
-    const all = document.querySelectorAll('div')
-    for (const d of all) {
-      const r = d.getBoundingClientRect()
-      if (r.width > 250 && r.width < 600 && r.height > 250 && r.top > 50 && r.top < 350) {
-        return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) }
-      }
-    }
-    return null
+  const context = await chromium.launchPersistentContext(BROWSER_PROFILE, {
+    headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-blink-features=AutomationControlled'],
+    viewport: { width: 1440, height: 900 },
+    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
   })
-  console.log('[Publisher] Login box:', JSON.stringify(loginBox))
+  await context.addInitScript(() => { Object.defineProperty(navigator, 'webdriver', { get: () => false }) })
+  const page = context.pages()[0] || await context.newPage()
 
-  if (loginBox) {
-    // QR code icon is at the top-right of the login box
-    const qrX = loginBox.x + loginBox.w - 20
-    const qrY = loginBox.y + 20
-    await page.mouse.click(qrX, qrY)
-    console.log('[Publisher] Clicked QR icon at', qrX, qrY)
-    await page.waitForTimeout(3000)
+  await page.goto('https://creator.xiaohongshu.com', { waitUntil: 'domcontentloaded', timeout: 15000 })
+  await page.waitForTimeout(3000)
+  console.log('[Publisher] Page URL:', page.url())
 
-    // After switching, the QR code appears in the same area
-    const qrPublic = path.join(IMAGES_DIR, 'qrcode_login.png')
-    await page.screenshot({ path: qrPublic, clip: { x: loginBox.x, y: loginBox.y, width: loginBox.w, height: loginBox.h } })
-  } else {
-    // Fallback: center of page
-    const qrPublic = path.join(IMAGES_DIR, 'qrcode_login.png')
-    await page.screenshot({ path: qrPublic, clip: { x: 400, y: 100, width: 500, height: 500 } })
+  const alreadyLoggedIn = await page.locator('text=发布笔记').first().isVisible({ timeout: 3000 }).catch(() => false)
+  if (alreadyLoggedIn) {
+    console.log('[Publisher] Already logged in, no QR needed')
+    persistentContext = context
+    setStatus({ phase: 'done', message: '已登录', progress: 100, loggedIn: true, qrCodeUrl: null })
+    return { success: true }
   }
 
-  setStatus({ phase: 'logging_in', message: '请用手机扫描二维码登录（5分钟内完成）', progress: 20, loggedIn: false, qrCodeUrl: '/images/qrcode_login.png' })
+  // Navigate to login page
+  await page.goto('https://creator.xiaohongshu.com/login?type=qr', { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() =>
+    page.goto('https://creator.xiaohongshu.com', { waitUntil: 'domcontentloaded', timeout: 15000 })
+  )
+  await page.waitForTimeout(1000)
+  console.log('[Publisher] Login page URL:', page.url())
 
-  // Wait for login (browser redirects to creator dashboard)
+  const loginBox = await page.evaluate(() => {
+    const f = [...document.querySelectorAll('form, div[class*="login"], div[class*="Login"], div[class*="form"], div[class*="Form"]')].find(f => { const r = f.getBoundingClientRect(); return r.width > 200 && r.height > 200 && r.top > 0 && r.top < 400 })
+    if (f) { const r = f.getBoundingClientRect(); return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) } }
+    const d = [...document.querySelectorAll('div')].find(d => { const r = d.getBoundingClientRect(); return r.width > 250 && r.width < 600 && r.height > 250 && r.top > 50 && r.top < 350 })
+    if (d) { const r = d.getBoundingClientRect(); return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) } }
+    return null
+  })
+
+  if (loginBox) {
+    await page.mouse.click(loginBox.x + loginBox.w - 25, loginBox.y + 25)
+    console.log('[Publisher] Clicked QR toggle at', loginBox.x + loginBox.w - 25, loginBox.y + 25)
+    await page.waitForTimeout(1000)
+  }
+
+  const qrPublic = path.join(IMAGES_DIR, 'qrcode_login.png')
+  if (loginBox) { await page.screenshot({ path: qrPublic, clip: { x: loginBox.x, y: loginBox.y, width: loginBox.w, height: loginBox.h } }) }
+  else { await page.screenshot({ path: qrPublic, clip: { x: 400, y: 100, width: 500, height: 500 } }) }
+
+  setStatus({ phase: 'logging_in', message: '请用手机扫描二维码登录（5分钟内完成）', progress: 20, loggedIn: false, qrCodeUrl: '/images/qrcode_login.png?_t=' + Date.now() })
+
   let loggedIn = false
   for (let i = 0; i < 150; i++) {
     await new Promise(r => setTimeout(r, 2000))
     const url = page.url()
-    if (!url.includes('login') && url.includes('creator.xiaohongshu.com')) {
-      loggedIn = true; break
-    }
+    if (i % 5 === 0) console.log('[Publisher] Current URL:', url.slice(0, 80))
+    if (!url.includes('login') && !url.includes('signin') && !url.includes('password') && url.includes('creator.xiaohongshu.com')) { loggedIn = true; break }
+    if (i > 3) { try { const h = await page.locator('text=发布笔记').first().isVisible({ timeout: 500 }).catch(() => false); if (h) { loggedIn = true; break } } catch {} }
   }
 
   if (loggedIn) {
-    const cookies = await context.cookies()
-    saveCookies(cookies)
-    await browser.close()
+    console.log('[Publisher] Login detected!')
+    persistentContext = context
     setStatus({ phase: 'done', message: '登录成功！', progress: 100, loggedIn: true, qrCodeUrl: null })
     return { success: true }
   }
 
-  await browser.close()
+  console.log('[Publisher] Login timeout')
+  await context.close()
   throw new Error('登录超时')
 }
 
 export function checkLoginStatus() {
   const cookies = loadCookies()
   if (!cookies || cookies.length === 0) return { loggedIn: false }
-  const now = Date.now() / 1000
-  const hasValidCookie = cookies.some(c => !c.expires || c.expires > now)
-  return { loggedIn: hasValidCookie }
+  return { loggedIn: cookies.some(c => !c.expires || c.expires > Date.now() / 1000) }
 }
