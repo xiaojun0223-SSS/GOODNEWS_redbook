@@ -6,6 +6,7 @@ export default function PreviewPanel({ selected, caption, onBack }) {
   const [publishing, setPublishing] = useState(false)
   const [pubStatus, setPubStatus] = useState(null)    // progress message
   const [loginBusy, setLoginBusy] = useState(false)
+  const [qrCodeUrl, setQrCodeUrl] = useState(null)
 
   // Check login status on mount
   useEffect(() => {
@@ -52,11 +53,13 @@ export default function PreviewPanel({ selected, caption, onBack }) {
 
   const handleLogin = async () => {
     setLoginBusy(true)
+    setQrCodeUrl(null)
     try {
       const res = await fetch('/api/publish/login', { method: 'POST' })
       const data = await res.json()
       if (data.success) {
         setLoggedIn(true)
+        setQrCodeUrl(null)
       } else {
         setPubStatus({ phase: 'error', message: data.message || '登录失败' })
       }
@@ -66,6 +69,19 @@ export default function PreviewPanel({ selected, caption, onBack }) {
       setLoginBusy(false)
     }
   }
+
+  // Poll for QR code and login status
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch('/api/publish/status')
+        const data = await res.json()
+        if (data.qrCodeUrl) setQrCodeUrl(data.qrCodeUrl)
+        if (data.loggedIn) { setLoggedIn(true); setQrCodeUrl(null) }
+      } catch {}
+    }, 3000)
+    return () => clearInterval(interval)
+  }, [])
 
   const handlePublish = async (draft = false) => {
     setPublishing(true)
@@ -167,18 +183,24 @@ export default function PreviewPanel({ selected, caption, onBack }) {
       {/* Publish Section */}
       <div className="card p-5 space-y-4">
         {/* Login Status */}
-        <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+        <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg flex-wrap gap-2">
           <div className="flex items-center gap-2">
             <div className={`w-2 h-2 rounded-full ${loggedIn === true ? 'bg-green-500' : loggedIn === false ? 'bg-red-400' : 'bg-gray-300 animate-pulse'}`} />
             <span className="text-xs text-gray-600">
-              {loggedIn === null ? '检测登录状态...' : loggedIn ? '已登录小红书创作者中心' : '未登录'}
+              {loggedIn === null ? '检测登录状态...' : loggedIn ? '已登录' : '未登录'}
             </span>
           </div>
-          {!loggedIn && (
+          <div className="flex flex-col gap-2">
             <button onClick={handleLogin} disabled={loginBusy} className="btn-secondary text-xs py-1.5 px-3">
-              {loginBusy ? '浏览器弹出中...' : '🔐 扫码登录'}
+              {loginBusy ? '登录中...' : loggedIn ? '🔄 更新登录' : '🔐 扫码登录'}
             </button>
-          )}
+            {qrCodeUrl && (
+              <div className="text-center">
+                <p className="text-xs text-gray-500 mb-2">用小红书 App 扫描下方二维码登录</p>
+                <img src={qrCodeUrl} alt="登录二维码" className="mx-auto w-48 h-48 rounded-lg border border-gray-200" />
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Publishing Progress */}
